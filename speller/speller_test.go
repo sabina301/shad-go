@@ -30,6 +30,7 @@ func TestSpell(t *testing.T) {
 		{number: 20, spelling: "twenty"},
 		{number: 22, spelling: "twenty-two"},
 		{number: 50, spelling: "fifty"},
+		{number: 55, spelling: "fifty-five"},
 		{number: 100, spelling: "one hundred"},
 		{number: 123, spelling: "one hundred twenty-three"},
 		{number: 1000, spelling: "one thousand"},
