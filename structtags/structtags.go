@@ -8,42 +8,71 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var cache sync.Map
+
+type fieldUnit struct {
+	index    int
+	isSlice  bool
+	elemType reflect.Type
+}
 
 func Unpack(req *http.Request, ptr interface{}) error {
 	if err := req.ParseForm(); err != nil {
 		return err
 	}
 
-	fields := make(map[string]reflect.Value)
-	v := reflect.ValueOf(ptr).Elem()
-	for i := 0; i < v.NumField(); i++ {
-		fieldInfo := v.Type().Field(i)
-		tag := fieldInfo.Tag
-		name := tag.Get("http")
-		if name == "" {
-			name = strings.ToLower(fieldInfo.Name)
+	valuePtr := reflect.ValueOf(ptr).Elem()
+
+	cVal, ok := cache.Load(valuePtr.Type())
+	if !ok {
+		fields := make(map[string]fieldUnit)
+		v := reflect.ValueOf(ptr).Elem()
+		for i := 0; i < v.NumField(); i++ {
+			fieldInfo := v.Type().Field(i)
+			tag := fieldInfo.Tag
+			name := tag.Get("http")
+			if name == "" {
+				name = strings.ToLower(fieldInfo.Name)
+			}
+			isSlice := fieldInfo.Type.Kind() == reflect.Slice
+			var elemType reflect.Type
+			if isSlice {
+				elemType = fieldInfo.Type.Elem()
+			}
+			fields[name] = fieldUnit{
+				index:    i,
+				isSlice:  isSlice,
+				elemType: elemType,
+			}
 		}
-		fields[name] = v.Field(i)
+		cache.Store(valuePtr.Type(), fields)
+		cVal = fields
 	}
+
+	fields := cVal.(map[string]fieldUnit)
 
 	for name, values := range req.Form {
 		f, ok := fields[name]
 		if !ok {
 			continue
 		}
-
-		for _, value := range values {
-			if f.Kind() == reflect.Slice {
-				elem := reflect.New(f.Type().Elem()).Elem()
+		field := valuePtr.Field(f.index)
+		if f.isSlice {
+			slice := reflect.MakeSlice(field.Type(), len(values), len(values))
+			for i, value := range values {
+				elem := reflect.New(f.elemType).Elem()
 				if err := populate(elem, value); err != nil {
 					return fmt.Errorf("%s: %v", name, err)
 				}
-				f.Set(reflect.Append(f, elem))
-			} else {
-				if err := populate(f, value); err != nil {
-					return fmt.Errorf("%s: %v", name, err)
-				}
+				slice.Index(i).Set(elem)
+			}
+			field.Set(slice)
+		} else if len(values) > 0 {
+			if err := populate(field, values[len(values)-1]); err != nil {
+				return fmt.Errorf("%s: %v", name, err)
 			}
 		}
 	}
